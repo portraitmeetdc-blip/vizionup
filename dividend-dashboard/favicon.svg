@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#667eea"/>
+      <stop offset="100%" style="stop-color:#764ba2"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#bg)"/>
+  <!-- V shape that doubles as an upward arrow/chart -->
+  <path d="M16 20 L32 44 L48 20" stroke="white" stroke-width="6" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Up arrow from the V point -->
+  <line x1="32" y1="44" x2="32" y2="28" stroke="#00c853" stroke-width="5" stroke-linecap="round"/>
+  <polygon points="25,32 32,22 39,32" fill="#00c853"/>
+</svg>

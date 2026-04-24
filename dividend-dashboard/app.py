@@ -2,8 +2,10 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from database import init_db, add_holding, remove_holding, get_holdings, update_holding
-from database import add_to_watchlist, remove_from_watchlist, get_watchlist
+from database import (
+    init_db, add_holding, remove_holding, get_holdings, update_holding,
+    add_to_watchlist, remove_from_watchlist, get_watchlist, get_profiles,
+)
 from market_data import (
     get_stock_info,
     get_dividend_history,
@@ -14,9 +16,19 @@ from market_data import (
 )
 
 # --- Page Config ---
+import base64, os
+
+def get_svg_base64(filename):
+    path = os.path.join(os.path.dirname(__file__), filename)
+    if os.path.exists(path):
+        with open(path, "r") as f:
+            svg = f.read()
+        return base64.b64encode(svg.encode()).decode()
+    return ""
+
 st.set_page_config(
-    page_title="Dividend Dashboard | The Passive Approach",
-    page_icon="💰",
+    page_title="VizionUp Wealth",
+    page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -50,9 +62,15 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- Sidebar Navigation ---
-st.sidebar.markdown("## 💰 The Passive Approach")
-st.sidebar.markdown("*Generating Wealth*")
+# --- Sidebar Brand ---
+logo_b64 = get_svg_base64("logo.svg")
+if logo_b64:
+    st.sidebar.markdown(
+        f'<img src="data:image/svg+xml;base64,{logo_b64}" style="width:100%;max-width:260px;margin-bottom:8px;">',
+        unsafe_allow_html=True,
+    )
+else:
+    st.sidebar.markdown("## VizionUp Wealth")
 st.sidebar.markdown("---")
 
 page = st.sidebar.radio(
@@ -61,15 +79,28 @@ page = st.sidebar.radio(
     label_visibility="collapsed",
 )
 
+# --- Family Profile Selector ---
+st.sidebar.markdown("---")
+st.sidebar.markdown("### Family")
+profiles = get_profiles()
+profile_options = {f"{p['icon']} {p['name']}": p["id"] for p in profiles}
+selected_label = st.sidebar.radio(
+    "Who's investing?",
+    list(profile_options.keys()),
+    label_visibility="collapsed",
+)
+active_profile_id = profile_options[selected_label]
+active_profile_name = selected_label.split(" ", 1)[1]
+
 # ============================================================
 # DASHBOARD PAGE
 # ============================================================
 if page == "📊 Dashboard":
-    st.markdown('<p class="main-header">The Passive Approach to Generating Wealth</p>', unsafe_allow_html=True)
-    st.markdown('<p class="sub-header">Dividend Dashboard — Your passive income at a glance</p>', unsafe_allow_html=True)
+    st.markdown('<p class="main-header">VizionUp Wealth</p>', unsafe_allow_html=True)
+    st.markdown(f'<p class="sub-header">{selected_label}\'s Dashboard — Passive income at a glance</p>', unsafe_allow_html=True)
     st.markdown("---")
 
-    holdings = get_holdings()
+    holdings = get_holdings(profile_id=active_profile_id)
 
     if not holdings:
         st.info("👋 Welcome! Start by adding stocks to your portfolio in the **My Portfolio** tab.")
@@ -180,7 +211,7 @@ elif page == "📈 My Portfolio":
                 if "error" in info:
                     st.error(f"Could not find ticker '{new_ticker}'. Please check the symbol.")
                 else:
-                    add_holding(new_ticker, new_shares, new_cost, new_notes)
+                    add_holding(new_ticker, new_shares, new_cost, new_notes, profile_id=active_profile_id)
                     st.success(f"Added {new_shares} shares of {new_ticker} ({info.get('name', '')}) to your portfolio!")
                     st.rerun()
             else:
@@ -188,8 +219,8 @@ elif page == "📈 My Portfolio":
 
     # Display current holdings
     st.markdown("---")
-    st.subheader("Current Holdings")
-    holdings = get_holdings()
+    st.subheader(f"{active_profile_name}'s Holdings")
+    holdings = get_holdings(profile_id=active_profile_id)
 
     if not holdings:
         st.info("No holdings yet. Add your first stock above!")
@@ -209,7 +240,7 @@ elif page == "📈 My Portfolio":
                     st.metric("Cost Basis", f"${h['shares'] * h['avg_cost']:,.2f}")
                 with col5:
                     if st.button("🗑️", key=f"del_{h['ticker']}", help=f"Remove {h['ticker']}"):
-                        remove_holding(h["ticker"])
+                        remove_holding(h["ticker"], profile_id=active_profile_id)
                         st.rerun()
                 st.markdown("---")
 
@@ -261,7 +292,7 @@ elif page == "🔍 Stock Screener":
             if st.button("Add Selected to Watchlist"):
                 for t in selected:
                     stock = next(r for r in results if r["ticker"] == t)
-                    add_to_watchlist(t, target_price=stock["price"] * 0.9)
+                    add_to_watchlist(t, target_price=stock["price"] * 0.9, profile_id=active_profile_id)
                 st.success(f"Added {len(selected)} stocks to your watchlist!")
         else:
             st.warning("No stocks matched your criteria. Try adjusting the filters.")
@@ -316,11 +347,11 @@ elif page == "👁️ Watchlist":
         watch_notes = st.text_input("Notes", placeholder="e.g. Wait for next ex-div date")
         if st.button("Add to Watchlist", type="primary"):
             if watch_ticker:
-                add_to_watchlist(watch_ticker, watch_target if watch_target > 0 else None, watch_notes)
+                add_to_watchlist(watch_ticker, watch_target if watch_target > 0 else None, watch_notes, profile_id=active_profile_id)
                 st.success(f"Added {watch_ticker} to watchlist!")
                 st.rerun()
 
-    watchlist = get_watchlist()
+    watchlist = get_watchlist(profile_id=active_profile_id)
 
     if not watchlist:
         st.info("Your watchlist is empty. Add stocks from the screener or manually above!")
@@ -350,7 +381,7 @@ elif page == "👁️ Watchlist":
                             st.caption(item["notes"])
                     with col6:
                         if st.button("🗑️", key=f"wdel_{item['ticker']}"):
-                            remove_from_watchlist(item["ticker"])
+                            remove_from_watchlist(item["ticker"], profile_id=active_profile_id)
                             st.rerun()
                     st.markdown("---")
 
