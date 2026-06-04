@@ -22,7 +22,7 @@ from insights import generate_insights, get_insight_icon
 
 # ── Page Config ────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Vision Income",
+    page_title="Vizion Income",
     page_icon="V",
     layout="wide",
     initial_sidebar_state="expanded",

@@ -1,4 +1,4 @@
--- Vision Income — Supabase Schema
+-- Vizion Income — Supabase Schema
 -- Run this in the Supabase SQL Editor to set up your database
 
 -- Families table: each family is an isolated group

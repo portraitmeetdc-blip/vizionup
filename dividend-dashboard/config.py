@@ -19,5 +19,5 @@ def get_supabase_anon_key() -> str:
 
 
 # App constants
-APP_NAME = "Vision Income"
+APP_NAME = "Vizion Income"
 APP_TAGLINE = "Building generational wealth, together."
