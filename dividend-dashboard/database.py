@@ -1,185 +1,214 @@
-import sqlite3
-import os
-from datetime import datetime
-
-DB_PATH = os.path.join(os.path.dirname(__file__), "portfolio.db")
-
-FAMILY_PROFILES = [
-    {"name": "Michael", "icon": "👨🏾", "role": "Dad"},
-    {"name": "Charlene", "icon": "👩🏾", "role": "Mom"},
-    {"name": "Sean", "icon": "👦🏾", "role": "Son"},
-    {"name": "Jaxxon", "icon": "👶🏾", "role": "Son"},
-]
+from config import get_supabase
 
 
-def get_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+# ── Family Management ──────────────────────────────────────────────
+
+def create_family(name: str) -> dict:
+    """Create a new family group. Returns the family record."""
+    sb = get_supabase()
+    result = sb.table("families").insert({"name": name}).execute()
+    return result.data[0] if result.data else {}
 
 
-def init_db():
-    conn = get_connection()
-    cursor = conn.cursor()
-
-    cursor.executescript("""
-        CREATE TABLE IF NOT EXISTS profiles (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE,
-            icon TEXT DEFAULT '',
-            role TEXT DEFAULT ''
-        );
-
-        CREATE TABLE IF NOT EXISTS holdings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            profile_id INTEGER NOT NULL DEFAULT 1,
-            ticker TEXT NOT NULL,
-            shares REAL NOT NULL,
-            avg_cost REAL NOT NULL,
-            date_added TEXT NOT NULL,
-            notes TEXT DEFAULT '',
-            UNIQUE(profile_id, ticker),
-            FOREIGN KEY (profile_id) REFERENCES profiles(id)
-        );
-
-        CREATE TABLE IF NOT EXISTS watchlist (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            profile_id INTEGER NOT NULL DEFAULT 1,
-            ticker TEXT NOT NULL,
-            target_price REAL,
-            date_added TEXT NOT NULL,
-            notes TEXT DEFAULT '',
-            UNIQUE(profile_id, ticker),
-            FOREIGN KEY (profile_id) REFERENCES profiles(id)
-        );
-
-        CREATE TABLE IF NOT EXISTS dividend_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ticker TEXT NOT NULL,
-            amount REAL NOT NULL,
-            ex_date TEXT,
-            pay_date TEXT,
-            recorded_at TEXT NOT NULL
-        );
-    """)
-
-    # Seed family profiles if empty
-    cursor.execute("SELECT COUNT(*) FROM profiles")
-    if cursor.fetchone()[0] == 0:
-        for p in FAMILY_PROFILES:
-            cursor.execute(
-                "INSERT INTO profiles (name, icon, role) VALUES (?, ?, ?)",
-                (p["name"], p["icon"], p["role"]),
-            )
-
-    conn.commit()
-    conn.close()
+def get_family(family_id: str) -> dict:
+    sb = get_supabase()
+    result = sb.table("families").select("*").eq("id", family_id).single().execute()
+    return result.data if result.data else {}
 
 
-def get_profiles():
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM profiles ORDER BY id")
-    rows = [dict(r) for r in cursor.fetchall()]
-    conn.close()
-    return rows
+def join_family_by_code(user_id: str, invite_code: str) -> bool:
+    """Join a family using an invite code."""
+    sb = get_supabase()
+    family = sb.table("families").select("id").eq("invite_code", invite_code).execute()
+    if not family.data:
+        return False
+    family_id = family.data[0]["id"]
+    sb.table("profiles").update({"family_id": family_id}).eq("id", user_id).execute()
+    return True
 
 
-def add_holding(ticker, shares, avg_cost, notes="", profile_id=1):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        """INSERT INTO holdings (profile_id, ticker, shares, avg_cost, date_added, notes)
-           VALUES (?, ?, ?, ?, ?, ?)
-           ON CONFLICT(profile_id, ticker) DO UPDATE SET
-               shares = shares + excluded.shares,
-               avg_cost = excluded.avg_cost,
-               notes = excluded.notes""",
-        (profile_id, ticker.upper(), shares, avg_cost, datetime.now().isoformat(), notes),
+def get_family_members(family_id: str) -> list[dict]:
+    """Get all members of a family."""
+    sb = get_supabase()
+    result = (
+        sb.table("profiles")
+        .select("*")
+        .eq("family_id", family_id)
+        .order("created_at")
+        .execute()
     )
-    conn.commit()
-    conn.close()
+    return result.data or []
 
 
-def remove_holding(ticker, profile_id=1):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM holdings WHERE ticker = ? AND profile_id = ?", (ticker.upper(), profile_id))
-    conn.commit()
-    conn.close()
+def get_family_invite_code(family_id: str) -> str:
+    family = get_family(family_id)
+    return family.get("invite_code", "")
 
 
-def get_holdings(profile_id=1):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM holdings WHERE profile_id = ? ORDER BY ticker", (profile_id,))
-    rows = [dict(r) for r in cursor.fetchall()]
-    conn.close()
-    return rows
+# ── Profile Management ─────────────────────────────────────────────
+
+def get_profile(user_id: str) -> dict:
+    sb = get_supabase()
+    result = sb.table("profiles").select("*").eq("id", user_id).single().execute()
+    return result.data if result.data else {}
 
 
-def update_holding(ticker, shares=None, avg_cost=None, notes=None, profile_id=1):
-    conn = get_connection()
-    cursor = conn.cursor()
-    updates = []
-    params = []
-    if shares is not None:
-        updates.append("shares = ?")
-        params.append(shares)
-    if avg_cost is not None:
-        updates.append("avg_cost = ?")
-        params.append(avg_cost)
-    if notes is not None:
-        updates.append("notes = ?")
-        params.append(notes)
-    if updates:
-        params.extend([ticker.upper(), profile_id])
-        cursor.execute(
-            f"UPDATE holdings SET {', '.join(updates)} WHERE ticker = ? AND profile_id = ?", params
+def update_profile(user_id: str, **kwargs) -> dict:
+    """Update profile fields (display_name, role, avatar_url, family_id)."""
+    sb = get_supabase()
+    allowed = {"display_name", "role", "avatar_url", "family_id"}
+    updates = {k: v for k, v in kwargs.items() if k in allowed}
+    if not updates:
+        return {}
+    result = sb.table("profiles").update(updates).eq("id", user_id).execute()
+    return result.data[0] if result.data else {}
+
+
+# ── Holdings (Portfolio) ───────────────────────────────────────────
+
+def add_holding(user_id: str, ticker: str, shares: float, avg_cost: float, notes: str = ""):
+    """Add or update a holding. If ticker exists, add shares and update cost basis."""
+    sb = get_supabase()
+    ticker = ticker.upper()
+
+    existing = (
+        sb.table("holdings")
+        .select("*")
+        .eq("user_id", user_id)
+        .eq("ticker", ticker)
+        .execute()
+    )
+
+    if existing.data:
+        old = existing.data[0]
+        total_shares = old["shares"] + shares
+        # Weighted average cost
+        if total_shares > 0:
+            new_avg = (
+                (old["shares"] * old["avg_cost"]) + (shares * avg_cost)
+            ) / total_shares
+        else:
+            new_avg = avg_cost
+        sb.table("holdings").update({
+            "shares": total_shares,
+            "avg_cost": round(new_avg, 4),
+            "notes": notes or old.get("notes", ""),
+            "updated_at": "now()",
+        }).eq("id", old["id"]).execute()
+    else:
+        sb.table("holdings").insert({
+            "user_id": user_id,
+            "ticker": ticker,
+            "shares": shares,
+            "avg_cost": avg_cost,
+            "notes": notes,
+        }).execute()
+
+
+def remove_holding(user_id: str, ticker: str):
+    sb = get_supabase()
+    sb.table("holdings").delete().eq("user_id", user_id).eq("ticker", ticker.upper()).execute()
+
+
+def get_holdings(user_id: str) -> list[dict]:
+    sb = get_supabase()
+    result = (
+        sb.table("holdings")
+        .select("*")
+        .eq("user_id", user_id)
+        .order("ticker")
+        .execute()
+    )
+    return result.data or []
+
+
+def get_family_holdings(family_id: str) -> dict[str, list[dict]]:
+    """Get holdings for all family members. Returns {user_id: [holdings]}."""
+    members = get_family_members(family_id)
+    sb = get_supabase()
+    result = {}
+    for m in members:
+        holdings = (
+            sb.table("holdings")
+            .select("*")
+            .eq("user_id", m["id"])
+            .order("ticker")
+            .execute()
         )
-        conn.commit()
-    conn.close()
+        result[m["id"]] = {
+            "profile": m,
+            "holdings": holdings.data or [],
+        }
+    return result
 
 
-def add_to_watchlist(ticker, target_price=None, notes="", profile_id=1):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        """INSERT INTO watchlist (profile_id, ticker, target_price, date_added, notes)
-           VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT(profile_id, ticker) DO UPDATE SET
-               target_price = excluded.target_price,
-               notes = excluded.notes""",
-        (profile_id, ticker.upper(), target_price, datetime.now().isoformat(), notes),
+def update_holding(user_id: str, ticker: str, **kwargs):
+    sb = get_supabase()
+    allowed = {"shares", "avg_cost", "notes"}
+    updates = {k: v for k, v in kwargs.items() if k in allowed and v is not None}
+    if updates:
+        sb.table("holdings").update(updates).eq("user_id", user_id).eq("ticker", ticker.upper()).execute()
+
+
+# ── Watchlist ──────────────────────────────────────────────────────
+
+def add_to_watchlist(user_id: str, ticker: str, target_price: float = None, notes: str = ""):
+    sb = get_supabase()
+    ticker = ticker.upper()
+
+    existing = (
+        sb.table("watchlist")
+        .select("id")
+        .eq("user_id", user_id)
+        .eq("ticker", ticker)
+        .execute()
     )
-    conn.commit()
-    conn.close()
+
+    if existing.data:
+        updates = {}
+        if target_price is not None:
+            updates["target_price"] = target_price
+        if notes:
+            updates["notes"] = notes
+        if updates:
+            sb.table("watchlist").update(updates).eq("id", existing.data[0]["id"]).execute()
+    else:
+        sb.table("watchlist").insert({
+            "user_id": user_id,
+            "ticker": ticker,
+            "target_price": target_price,
+            "notes": notes,
+        }).execute()
 
 
-def remove_from_watchlist(ticker, profile_id=1):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM watchlist WHERE ticker = ? AND profile_id = ?", (ticker.upper(), profile_id))
-    conn.commit()
-    conn.close()
+def remove_from_watchlist(user_id: str, ticker: str):
+    sb = get_supabase()
+    sb.table("watchlist").delete().eq("user_id", user_id).eq("ticker", ticker.upper()).execute()
 
 
-def get_watchlist(profile_id=1):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM watchlist WHERE profile_id = ? ORDER BY ticker", (profile_id,))
-    rows = [dict(r) for r in cursor.fetchall()]
-    conn.close()
-    return rows
-
-
-def save_dividend_history(ticker, amount, ex_date=None, pay_date=None):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        """INSERT INTO dividend_history (ticker, amount, ex_date, pay_date, recorded_at)
-           VALUES (?, ?, ?, ?, ?)""",
-        (ticker.upper(), amount, ex_date, pay_date, datetime.now().isoformat()),
+def get_watchlist(user_id: str) -> list[dict]:
+    sb = get_supabase()
+    result = (
+        sb.table("watchlist")
+        .select("*")
+        .eq("user_id", user_id)
+        .order("ticker")
+        .execute()
     )
-    conn.commit()
-    conn.close()
+    return result.data or []
+
+
+# ── Onboarding Helpers ─────────────────────────────────────────────
+
+def setup_family(user_id: str, family_name: str, user_role: str = "") -> dict:
+    """Create a family and assign the user to it. Returns the family record."""
+    family = create_family(family_name)
+    if family:
+        update_profile(user_id, family_id=family["id"], role=user_role)
+    return family
+
+
+def is_onboarded(user_id: str) -> bool:
+    """Check if user has completed onboarding (has a family)."""
+    profile = get_profile(user_id)
+    return bool(profile and profile.get("family_id"))
