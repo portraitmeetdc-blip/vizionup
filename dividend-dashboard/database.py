@@ -212,3 +212,240 @@ def is_onboarded(user_id: str) -> bool:
     """Check if user has completed onboarding (has a family)."""
     profile = get_profile(user_id)
     return bool(profile and profile.get("family_id"))
+
+
+# ── Activity Logging ──────────────────────────────────────────────
+
+def log_activity(user_id: str, action: str, details: dict = None):
+    """Insert an activity log entry."""
+    sb = get_supabase()
+    row = {"user_id": user_id, "action": action}
+    if details:
+        row["details"] = details
+    sb.table("activity_log").insert(row).execute()
+
+
+def get_user_activity(user_id: str, limit: int = 50) -> list[dict]:
+    """Get recent activity for a specific user."""
+    sb = get_supabase()
+    result = (
+        sb.table("activity_log")
+        .select("*")
+        .eq("user_id", user_id)
+        .order("created_at", desc=True)
+        .limit(limit)
+        .execute()
+    )
+    return result.data or []
+
+
+def get_all_activity(limit: int = 100) -> list[dict]:
+    """Get all activity across the platform (admin use)."""
+    sb = get_supabase()
+    result = (
+        sb.table("activity_log")
+        .select("*, profiles(display_name)")
+        .order("created_at", desc=True)
+        .limit(limit)
+        .execute()
+    )
+    return result.data or []
+
+
+# ── Portfolio Snapshots ───────────────────────────────────────────
+
+def save_portfolio_snapshot(
+    user_id: str,
+    total_value: float,
+    total_income: float,
+    holdings_count: int,
+):
+    """Upsert a daily portfolio snapshot (one per user per day)."""
+    sb = get_supabase()
+    today = __import__("datetime").date.today().isoformat()
+
+    existing = (
+        sb.table("portfolio_snapshots")
+        .select("id")
+        .eq("user_id", user_id)
+        .eq("snapshot_date", today)
+        .execute()
+    )
+
+    row = {
+        "total_value": total_value,
+        "total_income": total_income,
+        "holdings_count": holdings_count,
+    }
+
+    if existing.data:
+        sb.table("portfolio_snapshots").update(row).eq("id", existing.data[0]["id"]).execute()
+    else:
+        row.update({"user_id": user_id, "snapshot_date": today})
+        sb.table("portfolio_snapshots").insert(row).execute()
+
+
+def get_portfolio_history(user_id: str, days: int = 90) -> list[dict]:
+    """Get snapshot history for a user (for charts)."""
+    sb = get_supabase()
+    cutoff = (
+        __import__("datetime").date.today()
+        - __import__("datetime").timedelta(days=days)
+    ).isoformat()
+
+    result = (
+        sb.table("portfolio_snapshots")
+        .select("*")
+        .eq("user_id", user_id)
+        .gte("snapshot_date", cutoff)
+        .order("snapshot_date")
+        .execute()
+    )
+    return result.data or []
+
+
+def get_family_portfolio_history(family_id: str, days: int = 90) -> dict[str, list[dict]]:
+    """Get portfolio histories for all family members."""
+    members = get_family_members(family_id)
+    return {
+        m["id"]: get_portfolio_history(m["id"], days)
+        for m in members
+    }
+
+
+# ── Admin Functions ───────────────────────────────────────────────
+
+def is_admin(user_id: str) -> bool:
+    """Check if a user has admin privileges."""
+    sb = get_supabase()
+    result = (
+        sb.table("profiles")
+        .select("is_admin")
+        .eq("id", user_id)
+        .single()
+        .execute()
+    )
+    return bool(result.data and result.data.get("is_admin"))
+
+
+def set_admin(user_id: str, is_admin: bool = True):
+    """Grant or revoke admin status for a user."""
+    sb = get_supabase()
+    sb.table("profiles").update({"is_admin": is_admin}).eq("id", user_id).execute()
+
+
+def get_all_users() -> list[dict]:
+    """Get all registered users with their profiles."""
+    sb = get_supabase()
+    result = (
+        sb.table("profiles")
+        .select("*")
+        .order("created_at", desc=True)
+        .execute()
+    )
+    return result.data or []
+
+
+def get_all_families() -> list[dict]:
+    """Get all families with member counts."""
+    sb = get_supabase()
+    result = (
+        sb.table("families")
+        .select("*, profiles(count)")
+        .order("created_at", desc=True)
+        .execute()
+    )
+    return result.data or []
+
+
+def get_platform_stats() -> dict:
+    """Total users, families, and combined portfolio value across the platform."""
+    sb = get_supabase()
+
+    users = sb.table("profiles").select("id", count="exact").execute()
+    families = sb.table("families").select("id", count="exact").execute()
+
+    snapshots = (
+        sb.table("portfolio_snapshots")
+        .select("user_id, total_value, total_income, snapshot_date")
+        .order("snapshot_date", desc=True)
+        .execute()
+    )
+
+    # Keep only the latest snapshot per user
+    latest: dict[str, dict] = {}
+    for s in snapshots.data or []:
+        uid = s["user_id"]
+        if uid not in latest:
+            latest[uid] = s
+
+    total_value = sum(s["total_value"] for s in latest.values())
+    total_income = sum(s["total_income"] for s in latest.values())
+
+    return {
+        "total_users": users.count or 0,
+        "total_families": families.count or 0,
+        "total_portfolio_value": total_value,
+        "total_portfolio_income": total_income,
+    }
+
+
+def get_signup_activity(days: int = 30) -> list[dict]:
+    """Get user signups over time (for admin charts)."""
+    sb = get_supabase()
+    cutoff = (
+        __import__("datetime").date.today()
+        - __import__("datetime").timedelta(days=days)
+    ).isoformat()
+
+    result = (
+        sb.table("profiles")
+        .select("id, created_at")
+        .gte("created_at", cutoff)
+        .order("created_at")
+        .execute()
+    )
+    return result.data or []
+
+
+# ── Dividend Calendar ─────────────────────────────────────────────
+
+def get_portfolio_dividend_calendar(user_id: str) -> list[dict]:
+    """Return upcoming ex-dividend dates for all of a user's holdings.
+
+    Uses yfinance to pull each ticker's next ex-dividend date,
+    dividend rate, and estimated payout.
+    """
+    import yfinance as yf
+    from datetime import date
+
+    holdings = get_holdings(user_id)
+    calendar = []
+
+    for h in holdings:
+        try:
+            info = yf.Ticker(h["ticker"]).info
+            ex_date_ts = info.get("exDividendDate")
+            div_rate = info.get("dividendRate")
+
+            if not ex_date_ts or not div_rate:
+                continue
+
+            # yfinance returns ex-date as a UNIX timestamp
+            ex_date = date.fromtimestamp(ex_date_ts)
+
+            # Only include future or today's dates
+            if ex_date >= date.today():
+                calendar.append({
+                    "ticker": h["ticker"],
+                    "shares": h["shares"],
+                    "ex_date": ex_date.isoformat(),
+                    "dividend_rate": div_rate,
+                    "est_payout": round(div_rate / 4 * h["shares"], 2),
+                    "frequency": info.get("dividendYield", None),
+                })
+        except Exception:
+            continue
+
+    calendar.sort(key=lambda x: x["ex_date"])
+    return calendar

@@ -18,6 +18,8 @@ from market_data import (
     screen_dividend_stocks, calculate_portfolio_income, project_growth,
 )
 from insights import generate_insights, get_insight_icon
+from pages_admin import page_admin, page_analytics
+from database import is_admin as check_is_admin
 
 
 # ── Page Config ────────────────────────────────────────────────────
@@ -248,9 +250,17 @@ def render_sidebar(user: dict, profile: dict):
     st.sidebar.markdown("---")
 
     # Navigation
+    # Build nav list — add Analytics always, Admin only for admins
+    nav_items = [
+        "Dashboard", "Analytics", "Family Overview", "My Portfolio",
+        "Stock Screener", "Watchlist", "Growth Projector", "Settings",
+    ]
+    if check_is_admin(user.get("id", "")):
+        nav_items.append("Admin")
+
     page = st.sidebar.radio(
         "Navigate",
-        ["Dashboard", "Family Overview", "My Portfolio", "Stock Screener", "Watchlist", "Growth Projector", "Settings"],
+        nav_items,
         label_visibility="collapsed",
     )
 
@@ -953,12 +963,14 @@ def main():
     # Route to page
     pages = {
         "Dashboard": page_dashboard,
+        "Analytics": page_analytics,
         "Family Overview": page_family,
         "My Portfolio": page_portfolio,
         "Stock Screener": page_screener,
         "Watchlist": page_watchlist,
         "Growth Projector": page_projector,
         "Settings": page_settings,
+        "Admin": page_admin,
     }
 
     page_func = pages.get(page, page_dashboard)
