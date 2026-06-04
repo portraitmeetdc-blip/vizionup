@@ -29,6 +29,40 @@ st.set_page_config(
 )
 
 
+# ── PWA Support ────────────────────────────────────────────────────
+def inject_pwa():
+    """Make the app installable as a Progressive Web App on phones and desktops."""
+    st.markdown("""
+    <link rel="manifest" href="data:application/json;base64,eyJuYW1lIjoiVml6aW9uIEluY29tZSIsInNob3J0X25hbWUiOiJWaXppb24iLCJzdGFydF91cmwiOiIuIiwiZGlzcGxheSI6InN0YW5kYWxvbmUiLCJiYWNrZ3JvdW5kX2NvbG9yIjoiIzBlMTExNyIsInRoZW1lX2NvbG9yIjoiIzY2N2VlYSIsImRlc2NyaXB0aW9uIjoiQnVpbGRpbmcgZ2VuZXJhdGlvbmFsIHdlYWx0aCwgdG9nZXRoZXIuIiwiaWNvbnMiOlt7InNyYyI6ImRhdGE6aW1hZ2Uvc3ZnK3htbCw8c3ZnIHhtbG5zPSdodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2Zycgdmlld0JveD0nMCAwIDEwMCAxMDAnPjxyZWN0IHdpZHRoPScxMDAnIGhlaWdodD0nMTAwJyByeD0nMjAnIGZpbGw9JyM2NjdlZWEnLz48dGV4dCB4PSc1MCcgeT0nNjgnIGZvbnQtc2l6ZT0nNTUnIGZvbnQtd2VpZ2h0PSc3MDAnIGZpbGw9J3doaXRlJyB0ZXh0LWFuY2hvcj0nbWlkZGxlJyBmb250LWZhbWlseT0nc2Fucy1zZXJpZic+Vjwvc3ZnPiIsInNpemVzIjoiNTEyeDUxMiIsInR5cGUiOiJpbWFnZS9zdmcreG1sIn1dfQ==" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Vizion Income" />
+    <meta name="theme-color" content="#667eea" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23667eea'/><text x='50' y='68' font-size='55' font-weight='700' fill='white' text-anchor='middle' font-family='sans-serif'>V</text></svg>" />
+    """, unsafe_allow_html=True)
+
+    # Register service worker for offline caching
+    st.markdown("""
+    <script>
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register(
+            URL.createObjectURL(new Blob([`
+                self.addEventListener('fetch', function(event) {
+                    event.respondWith(
+                        caches.match(event.request).then(function(response) {
+                            return response || fetch(event.request);
+                        })
+                    );
+                });
+            `], {type: 'application/javascript'}))
+        ).catch(function() {});
+    }
+    </script>
+    """, unsafe_allow_html=True)
+
+
 # ── Global Styles ──────────────────────────────────────────────────
 def inject_styles():
     st.markdown("""
@@ -892,6 +926,7 @@ def page_settings(user: dict, profile: dict):
 
 # ── Main App ───────────────────────────────────────────────────────
 def main():
+    inject_pwa()
     inject_styles()
 
     # Check authentication
